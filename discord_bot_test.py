@@ -11,28 +11,34 @@ import time
 import hashlib
 import struct
 import json
+from blockchain_support import Blockchain
 
+logging.basicConfig(level=logging.WARNING)
 client = discord.Client()
+blockchain = Blockchain()
+ostr = "Genesis block: " + str(blockchain.chain)
+logging.debug(ostr)
 
 ################################################################################
 # set up the databases
 
 # {'account_name': 'Gates Divorce', 'id_key': 'rngteger'}
-db1 = TinyDB('databases/db1.json')
+db1 = TinyDB('db1.json')
 db1.truncate()
 
 # { 'account_name': 'Gates Divorce',
 #   'beneficiary': 'Bill Gates'
 # }
-db2 = TinyDB('databases/db2.json')
+db2 = TinyDB('db2.json')
 db2.truncate()
 
 # { 'account_name': 'Gates Divorce',
 #   'condition_name': 'doc1',
-#   'beneficiary': 'Bill Gates'
+#   'bene_from': 'Bill Lawyer'
+#   'bene_to': 'Melinda Lawyer'
 #   'amount': 100
 # }
-db3 = TinyDB('databases/db3.json')
+db3 = TinyDB('db3.json')
 db3.truncate()
 
 user_query = Query()
@@ -68,10 +74,12 @@ def add_new_beneficiary(beneficiary_name, account_name):
 
 
 # add new condition for an account, only supports one beneficiary
-def add_new_conditions(account_name, condition, beneficiary, amount):
+def add_new_conditions(account_name, condition, bene_from, bene_to, amount):
+    # update the database
     line_entry =  { 'account_name': account_name,
-                    'condition': condition,
-                    'beneficiary': beneficiary,
+                    'condition_name': condition,
+                    'bene_from': bene_from,
+                    'bene_to': bene_to,
                     'amount': amount}
     db3.insert(line_entry)
 
@@ -96,24 +104,35 @@ async def on_message(message):
         await message.channel.send('These are the actions available to you')
         await message.channel.send('create trust account <account name>')
         await message.channel.send('show active accounts')
-        await message.channel.send('add condition <condition> to <account name> for <beneficiary> for <dollars>')
+        await message.channel.send('add condition <condition> to <account name> from <beneficiary> to <beneficiary> dfor <dollars>')
         await message.channel.send('show rules for <account name>')
         await message.channel.send('add beneficiary <beneficiary name> to <account name>')
         await message.channel.send('show beneficiary for <account name>')
         await message.channel.send('clear condition <condition> for <account name>')
         await message.channel.send('settle trust account <account name>')
-        await message.channel.send('show blockchain for account <account name>')
+        await message.channel.send('show blockchain for <account name>')
 
 
 ################################################################################
     if message.content.startswith('create trust account'):
         account_name = str(re.findall(r'"(.*?)"',read_text))
+
         # create database entry for new account
         add_new_account(account_name)
+
         # show new db entry
         new_account = db1.search(user_query.account_name == account_name)
         logging.warning(new_account)
 
+        # start the blockchain
+        logging.warning("Starting new block chain")
+        t1 = blockchain.new_transaction("Funder", "Trust", '1000000 BTC')
+        logging.warning(str(t1))
+        blockchain.new_block(12345)
+        logging.warning("Genesis block: ")
+        logging.warning(blockchain.chain)
+
+        # update the client
         await message.channel.send('Initiating private blockchain')
         await message.channel.send('=============================')
 
@@ -158,13 +177,36 @@ async def on_message(message):
         # pull parameters from command line
         parameters = re.findall('"([^"]*)"', read_text)
         logging.warning(parameters)
+        condition_name = parameters[0]
+        account_name = parameters[1]
+        bene_from = parameters[2]
+        bene_to = parameters[3]
+        amount = parameters[4]
+
+        add_new_conditions( account_name,
+                            condition_name,
+                            bene_from,
+                            bene_to,
+                            amount
+                            )
 
         await message.channel.send('Adding condition to...')
 
 
 ################################################################################
     if message.content.startswith('show conditions for'):
+        parameters = re.findall('"([^"]*)"', read_text)
         await message.channel.send('Showing conditions for...')
+        account_name = parameters[0]
+        active_conditions = db3.all()
+        if active_conditions == []:
+            await message.channel.send("No active conditions")
+        else:
+            for item in active_conditions:
+                conditions = db3.search(user_query.account_name == [account_name])
+                ostr = "Condition: " + item['condition_name']
+                await message.channel.send(ostr)
+
 
 
 ################################################################################
@@ -172,13 +214,41 @@ async def on_message(message):
         parameters = re.findall('"([^"]*)"', read_text)
         logging.warning(parameters)
         add_new_beneficiary(parameters[0], parameters[1])
-        ostr = "Adding beneficiary" + parameters[0] + " to " + parameters[1]
+        ostr = "Adding beneficiary " + parameters[0] + " to " + parameters[1]
         await message.channel.send(ostr)
 
+
+################################################################################
     if message.content.startswith('clear condition'):
         await message.channel.send('Clearing condition')
-        await message.channel.send('Updating blockchain')
+        parameters = re.findall('"([^"]*)"', read_text)
+        account_name = parameters[1]
+        condition_name = parameters[0]
+        await message.channel.send(condition_name)
+        clearing_condition = db3.search(
+                                (user_query.account_name == account_name) &
+                                (user_query.condition_name == condition_name)
+                                )
+        ostr = "Amount to be transferred: " + clearing_condition[0]['amount']
+        await message.channel.send(ostr)
+        clearing_amount = int(clearing_condition[0]['amount'])
+        t4 = blockchain.new_transaction(clearing_condition[0]['bene_from'],
+                                        clearing_condition[0]['bene_to'],
+                                        clearing_condition[0]['amount']
+                                        )
+        blockchain.new_block(12345)
+        await message.channel.send('Updated blockchain')
 
+
+################################################################################
+    if message.content.startswith('show blockchain for'):
+        await message.channel.send('Retrieving Blockchain for this trust...')
+        parameters = re.findall('"([^"]*)"', read_text)
+        account_name = parameters[0]
+        ostr = blockchain.chain
+        await message.channel.send(ostr)
+
+################################################################################
     if message.content.startswith('settle account'):
         await message.channel.send('Settling account')
 
